@@ -1,58 +1,87 @@
-import org.artifactory.build.*
-import org.artifactory.repo.RepoPath
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import org.artifactory.addon.docker.rest.DockerResource
+import org.artifactory.api.context.ContextHelper
+import org.artifactory.build.ReleaseStatus
+import org.artifactory.exception.CancelException
 import org.artifactory.repo.RepoPathFactory
-
+import org.jfrog.repomd.docker.model.DockerPromotion
 import static com.google.common.collect.Multimaps.forMap
 
-@Grab('org.codehaus.groovy.modules.http-builder:http-builder:0.7')
-
-import groovyx.net.http.HTTPBuilder
-import static groovyx.net.http.Method.POST
-import static groovyx.net.http.ContentType.*
-
 promotions {
-    promoteDocker(users: "admin", params: [targetRepository: 'docker-prod-local', status: 'Released', comment: 'Promoting Docker build']) { buildName, buildNumber, params ->
+    promoteDocker(
+            users: ['admin'],
+            params: [targetRepository: 'Repository to move the Docker image to',
+                     status: 'Status of the build (default : Release)',
+                     comment: 'Comment added to the build (default: Promoting docker build)']) { buildName, buildNumber, params ->
         log.warn("params: $params")
         log.warn "promoting $buildName, $buildNumber"
-//        def (name,version) = searches.itemsByProperties(forMap(['build.name': buildName,'build.number': buildNumber]))[0].path.split('/')
-//        log.warn "found image $name/$version"
-        def targetRepository = params['targetRepository'] ? params['targetRepository'][0] : 'docker-prod-local'
-        def imageName = params['imageName'][0]
-        def imageTag = params['imageTag'][0]
-
-        log.warn "targetRepository : $targetRepository, imageName : $imageName, imageTag : $imageTag"
-
-        // TODO : replace this by a call to the internal API ? or at least deduce artifactory URL from the incoming request
-        def http = new HTTPBuilder('http://localhost:8088/artifactory/api/docker/docker-dev-local/v2/promote')
-
-        http.request(POST, TEXT) { req ->
-            headers.'Authorization' = "Basic ${"admin:password".bytes.encodeBase64().toString()}"
-            requestContentType = JSON
-            body = [targetRepo: targetRepository, dockerRepository: imageName, tag: imageTag, copy: false]
-            response.success = { resp, json ->
-//                def buildRun = builds.getBuilds(buildName, buildNumber, null)[0]
-//                log.warn "found build $buildRun"
-//                def build = builds.getDetailedBuild(buildRun)
-//                log.warn "build $build"
-//                def statuses = build.releaseStatuses
-//                log.warn "current statuses $statuses"
-//                log.warn "Ci user ${(params['ciUser'])[0]}"
-//                statuses << new ReleaseStatus((params['status'])[0], (params['comment'])[0], (params['targetRepository'])[0], (params['ciUser'])[0], security.currentUsername)
-//                log.warn "New statues ${statuses[0]}"
-//                builds.saveBuild(build)
-                handleLatestTag(targetRepository, imageName, imageTag)
-                message = " Build $buildName/$buildNumber has been successfully promoted"
-                status = 200
-            }
+        def results = searches.itemsByProperties(forMap(['build.name': buildName, 'build.number': buildNumber]))
+        if (!results) {
+            throw new CancelException("No docker image found with properties : build.name=$buildName, build.number=$buildNumber", 500)
         }
+
+        def (String imageName, String imageTag) = results[0].path.split('/')
+        String targetRepository = paramWithDefault(params, 'targetRepository', 'docker-prod-local')
+        String status = paramWithDefault(params, 'status', 'Released')
+        String comment = paramWithDefault(params, 'comment', 'Promoting Docker build')
+        log.warn "Will try to promote docker image with : " +
+                "targetRepository : $targetRepository, imageName : $imageName, imageTag : $imageTag"
+
+        promoteDockerImage(targetRepository, imageName, imageTag)
+        handleLatestTag(targetRepository, imageName, imageTag)
+        promoteBuild(buildName, buildNumber, status, comment, targetRepository)
+
+        message = " Build $buildName/$buildNumber has been successfully promoted"
+        status = 200
     }
 }
 
-def handleLatestTag(String repoKey, String imageName, String imageTag) {
+private String paramWithDefault(def params, String key, String defaultValue) {
+    return params[key] ? (params[key])[0] : defaultValue
+}
+
+private void promoteBuild(String buildName, String buildNumber, String status, String comment, String targetRepository) {
+    def buildRun = builds.getBuilds(buildName, buildNumber, null)[0]
+    def build = builds.getDetailedBuild(buildRun)
+    def statuses = build.releaseStatuses
+//        log.warn "Ci user ${(params['ciUser'])[0]}"
+    statuses << new ReleaseStatus(status, comment, targetRepository, null, security.currentUsername)
+    builds.saveBuild(build)
+}
+
+private void promoteDockerImage(String targetRepository, imageName, imageTag) {
+    DockerResource dockerResource = ContextHelper.get().beanForType(DockerResource)
+    DockerPromotion dockerPromotion =
+            new DockerPromotion(targetRepo: targetRepository, dockerRepository: imageName, tag: imageTag, copy: false)
+    dockerResource.promoteV2('docker-dev-local', dockerPromotion)
+    // TODO : delete promoted folder, it's still there after being promoted, maybe because it has properties ?
+}
+
+private void handleLatestTag(String repoKey, String imageName, String imageTag) {
+    final def latest = 'latest'
+    copyFolder(repoKey, imageName, imageTag, latest)
+    updateManifest(repoKey, imageName, latest)
+}
+
+private void copyFolder(String repoKey, String imageName, String imageTag, String latest) {
     def origin = RepoPathFactory.create(repoKey, "$imageName/$imageTag")
-    def target = RepoPathFactory.create(repoKey, "$imageName/latest")
+    def target = RepoPathFactory.create(repoKey, "$imageName/$latest")
     if (repositories.exists(target)) {
         repositories.delete(target)
     }
     repositories.copy(origin, target)
+}
+
+private void updateManifest(String repoKey, String imageName, String latest) {
+    def manifestPath = RepoPathFactory.create(repoKey, "$imageName/$latest/manifest.json")
+    String manifest = repositories.getStringContent(manifestPath)
+    if (!manifest) {
+        throw new CancelException("Couldn\'t find $imageName/$latest/manifest.json", 500)
+    }
+    Map manifestJson = new JsonSlurper().parseText(manifest)
+    manifestJson['tag'] = "$latest"
+    String json = JsonOutput.toJson(manifestJson)
+    json = JsonOutput.prettyPrint(json)
+    repositories.deploy(manifestPath, new ByteArrayInputStream(json.getBytes()))
 }

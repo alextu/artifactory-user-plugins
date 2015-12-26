@@ -1,11 +1,20 @@
 import com.fasterxml.jackson.databind.ObjectMapper
+import groovy.json.JsonSlurper
 import groovyx.net.http.HttpResponseException
+import jdk.internal.util.xml.impl.Input
+import org.codehaus.groovy.runtime.IOGroovyMethods
 import org.jfrog.artifactory.client.Artifactory
 import org.jfrog.artifactory.client.ArtifactoryRequest
+import org.jfrog.artifactory.client.DownloadableArtifact
+import org.jfrog.artifactory.client.ItemHandle
 import org.jfrog.artifactory.client.impl.ArtifactoryRequestImpl
 import org.jfrog.artifactory.client.model.File
+import org.jfrog.artifactory.client.model.Folder
 import org.jfrog.artifactory.client.model.LocalRepository
 import spock.lang.Specification
+
+import java.nio.charset.Charset
+
 import static org.jfrog.artifactory.client.ArtifactoryClient.create
 
 class ImagePromoteTest extends Specification {
@@ -19,7 +28,7 @@ class ImagePromoteTest extends Specification {
     final def BUILD_NAME = 'docker_jenkins_release'
     final def BUILD_NUMBER = 10
 
-    def 'test promoting a docker image for the first time'() {
+    def 'test promoting a docker image for the first time, specifying image name and tag'() {
         setup:
         artifactory = create(artUrl, "admin", "password")
         cleanFakeDockerRepos()
@@ -31,7 +40,8 @@ class ImagePromoteTest extends Specification {
         when: "promoting docker image without existing latest tag"
         ArtifactoryRequest request = new ArtifactoryRequestImpl()
                 .apiUrl("api/plugins/build/promote/promoteDocker/$BUILD_NAME/$BUILD_NUMBER")
-                .addQueryParam("params", "imageName=mybusybox|imageTag=$BUILD_NUMBER")
+//                .addQueryParam("params", "imageName=mybusybox|imageTag=$BUILD_NUMBER")
+                .addQueryParam("params", "status=released|comment=Promoting")
                 .responseType(ArtifactoryRequest.ContentType.TEXT)
                 .method(ArtifactoryRequest.Method.POST)
         artifactory.restCall(request)
@@ -40,10 +50,20 @@ class ImagePromoteTest extends Specification {
         assert !fileExists(DOCKER_DEV, "$DOCKER_IMAGE/manifest.json")
         assert fileExists(DOCKER_PROD, "$DOCKER_IMAGE/manifest.json")
 
-        then: "the latest tag should has been created"
+        then: "the latest tag should have been created"
         assert fileExists(DOCKER_PROD, "mybusybox/latest/manifest.json")
 
+        then: "the manifest.json file should contains the latest tag"
+        InputStream inputStream = artifactory.repository(DOCKER_PROD).download('mybusybox/latest/manifest.json').doDownload()
+        String manifest = IOGroovyMethods.getText(inputStream)
+        def manifestJson = new JsonSlurper().parseText(manifest)
+        assert manifestJson['tag'] == 'latest'
     }
+
+    def 'test promoting a docker image for the first time, without specifying image name and tag'() {
+
+    }
+
 
     def 'test promoting a docker image for the second time'() {
         // TODO : create a mybusybox:latest in the docker-prod-local
@@ -139,8 +159,29 @@ class ImagePromoteTest extends Specification {
     }
 
     private def deployFakeImage() {
-        artifactory.repository(DOCKER_DEV).folder(DOCKER_IMAGE).create()
-        def fileContent = new ByteArrayInputStream("something".bytes)
+        ItemHandle imageFolder = artifactory.repository(DOCKER_DEV).folder(DOCKER_IMAGE)
+        imageFolder.create()
+        imageFolder.properties().addProperty('build.name', "$BUILD_NAME").addProperty('build.number', '10').doSet(false)
+        def manifestJsonContent = """
+            {
+               "schemaVersion": 1,
+               "name": "mybusybox",
+               "tag": "10",
+               "architecture": "amd64",
+               "fsLayers": [
+                  {
+                     "blobSum": "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"
+                  },
+                  {
+                     "blobSum": "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"
+                  },
+                  {
+                     "blobSum": "sha256:d7e8ec85c5abc60edf74bd4b8d68049350127e4102a084f22060f7321eac3586"
+                  }
+               ]
+            }
+        """
+        def fileContent = new ByteArrayInputStream(manifestJsonContent.bytes)
         artifactory.repository(DOCKER_DEV).upload('mybusybox/10/manifest.json', fileContent).doUpload();
     }
 
