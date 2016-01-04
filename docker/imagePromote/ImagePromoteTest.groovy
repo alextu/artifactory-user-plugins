@@ -1,19 +1,12 @@
 import com.fasterxml.jackson.databind.ObjectMapper
 import groovy.json.JsonSlurper
 import groovyx.net.http.HttpResponseException
-import jdk.internal.util.xml.impl.Input
 import org.codehaus.groovy.runtime.IOGroovyMethods
 import org.jfrog.artifactory.client.Artifactory
 import org.jfrog.artifactory.client.ArtifactoryRequest
-import org.jfrog.artifactory.client.DownloadableArtifact
 import org.jfrog.artifactory.client.ItemHandle
 import org.jfrog.artifactory.client.impl.ArtifactoryRequestImpl
-import org.jfrog.artifactory.client.model.File
-import org.jfrog.artifactory.client.model.Folder
-import org.jfrog.artifactory.client.model.LocalRepository
 import spock.lang.Specification
-
-import java.nio.charset.Charset
 
 import static org.jfrog.artifactory.client.ArtifactoryClient.create
 
@@ -40,7 +33,6 @@ class ImagePromoteTest extends Specification {
         when: "promoting docker image without existing latest tag"
         ArtifactoryRequest request = new ArtifactoryRequestImpl()
                 .apiUrl("api/plugins/build/promote/promoteDocker/$BUILD_NAME/$BUILD_NUMBER")
-//                .addQueryParam("params", "imageName=mybusybox|imageTag=$BUILD_NUMBER")
                 .addQueryParam("params", "status=released|comment=Promoting")
                 .responseType(ArtifactoryRequest.ContentType.TEXT)
                 .method(ArtifactoryRequest.Method.POST)
@@ -69,7 +61,6 @@ class ImagePromoteTest extends Specification {
         // TODO : create a mybusybox:latest in the docker-prod-local
 
     }
-
 
     private boolean fileExists(String repoKey, String path) {
         boolean exists = true
