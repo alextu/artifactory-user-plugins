@@ -105,6 +105,7 @@ private void updateManifest(String repoKey, String imageName, String latest) {
     String json = JsonOutput.toJson(manifestJson)
     json = JsonOutput.prettyPrint(json)
     repositories.deploy(manifestPath, new ByteArrayInputStream(json.getBytes()))
+    // TODO : calculate sha2 to avoid an artifactory bug when displaying layers
 }
 
 private def currentUserCredentials() {

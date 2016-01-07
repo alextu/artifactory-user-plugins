@@ -52,14 +52,8 @@ class ImagePromoteTest extends Specification {
         assert manifestJson['tag'] == 'latest'
     }
 
-    def 'test promoting a docker image for the first time, without specifying image name and tag'() {
-
-    }
-
-
     def 'test promoting a docker image for the second time'() {
         // TODO : create a mybusybox:latest in the docker-prod-local
-
     }
 
     private boolean fileExists(String repoKey, String path) {
