@@ -7,6 +7,7 @@ import org.artifactory.state.ArtifactoryServerState
 import org.artifactory.storage.db.servers.model.ArtifactoryServer
 import org.artifactory.storage.db.servers.model.ArtifactoryServerRole
 import org.artifactory.storage.db.servers.service.ArtifactoryServersCommonService
+import org.slf4j.Logger
 
 // Licenses Bucket plugin
 
@@ -29,36 +30,23 @@ executions {
 jobs {
     // Every 30s we clean the license pool
     clean(cron: "1/30 * * * * ?") {
-        cleanBucket()
-        // we must clean the servers
-        // cleanArtifactoryServers()
+        def artifactoryServersCommonService = ContextHelper.get().beanForType(ArtifactoryServersCommonService)
+        new ArtifactoryInactiveServersCleaner(artifactoryServersCommonService, log).cleanInactiveArtifactoryServers()
     }
 }
 
 @Field
-Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService)).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
+Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
 
 private String getLicenceFromBucket(String nodeId) {
     // get a licence from the bucket
     licensesBucket.getLicenseKey(nodeId)
 }
 
-private void cleanBucket() {
-    licensesBucket.clean()
-}
-
-enum State {
-    AVAILABLE, TAKEN
-}
-
 @EqualsAndHashCode(includes = 'keyHash')
 public class License {
-
     String keyHash
-    String nodeId
-    State state
-    Date takenTimestamp
-
+    String key
 }
 
 public class Bucket {
@@ -67,69 +55,61 @@ public class Bucket {
 
     Set<License> licenses = new HashSet<License>()
     ArtifactoryServersCommonService artifactoryServersCommonService
+    Logger log
 
-    public Bucket(ArtifactoryServersCommonService artifactoryServersCommonService) {
+    public Bucket(ArtifactoryServersCommonService artifactoryServersCommonService, Logger log) {
         this.artifactoryServersCommonService = artifactoryServersCommonService
+        this.log = log
     }
 
     void loadLicensesFromEnv(String licensesConcatenated) {
-        // licences from Env, by default all available
         String[] licenseKeys = licensesConcatenated?.split(',')
         for (String licenseKey : licenseKeys) {
-            licenses << new License(keyHash:hashLicenseKey(licenseKey), state: State.AVAILABLE)
+            licenses << new License(keyHash : hashLicenseKey(licenseKey), key: licenseKey)
         }
-        // licenses from the artifactory servers infos, mark the ones taken, and the one eventually taken
-        List<ArtifactoryServer> servers = artifactoryServersCommonService.getAllArtifactoryServers()
-        for (ArtifactoryServer server : servers) {
-            if (server.serverRole != ArtifactoryServerRole.PRIMARY) {
-                // Looking for existing license from the registered servers
-                License existing = licenses.find { it.keyHash == server.licenseKeyHash }
-                if (existing) {
-                    existing.nodeId = server.serverId
-                    if (server.getServerState() == ArtifactoryServerState.RUNNING) {
-                        existing.state = State.TAKEN
-                    } else {
-                        eventuallyTakeLicense(existing)
-                    }
-                }
-            }
-        }
+        log.warn "${licenses.size()} licenses for secondary nodes loaded"
     }
 
     String hashLicenseKey(String licenseKey) {
         DigestUtils.sha1Hex(licenseKey) + "3"
     }
 
-    void eventuallyTakeLicense(License license) {
-        license.state = State.TAKEN
-        license.takenTimestamp = new Date()
-    }
-
     String getLicenseKey(String nodeId) {
-        License available = licenses.find { it.state == State.AVAILABLE }
-        if (available) {
-            eventuallyTakeLicense(available)
-            return available.keyHash
+        log.warn "Node $nodeId is requesting a license from the primary"
+        List<String> activeMemberLicenses = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash })
+        Set<String> availableLicenses = licenses*.keyHash - activeMemberLicenses
+        log.warn "Found ${availableLicenses.size()} available licenses"
+        String license
+        if (availableLicenses) {
+            String availableLicenseHash = availableLicenses ? availableLicenses?.first() : null
+            license = licenses.find({ it.keyHash == availableLicenseHash }).key
         }
+        return license
     }
 
-    void clean() {
-        // (Some locking expected)
-        // We check that a license
-        for (License license : licenses) {
-            if (license.state == State.TAKEN) {
-                // check that the server is still running
-                // if yes, reset the takenTimestamp
+}
 
-                // if not, check the takenTimestamp + delay < now
+public class ArtifactoryInactiveServersCleaner {
 
-                    // change the state to available and reset the takenTimestamp
+    ArtifactoryServersCommonService artifactoryServersCommonService
+    Logger log
 
-            } else if (license.state == State.AVAILABLE) {
-                // check that there's no running server corresponding to the license
-                // if so change the state to TAKEN
-            }
+    ArtifactoryInactiveServersCleaner(ArtifactoryServersCommonService artifactoryServersCommonService, Logger log) {
+        this.artifactoryServersCommonService = artifactoryServersCommonService
+        this.log = log
+    }
+
+    void cleanInactiveArtifactoryServers() {
+        List<String> allMembers = artifactoryServersCommonService.getAllArtifactoryServers().collect({ it.serverId })
+        List<String> activeMembersIds = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.serverId })
+        String primaryId = artifactoryServersCommonService.getRunningHaPrimary().serverId
+        List<String> inactiveMemebers = allMembers - activeMembersIds - primaryId
+        log.warn "Running inactive artifactory servers cleaning task, found ${inactiveMemebers.size()} inactive servers to remove"
+        inactiveMemebers.each {
+            artifactoryServersCommonService.removeServer(it)
         }
     }
 
 }
+
+
