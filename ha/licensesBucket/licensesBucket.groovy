@@ -36,7 +36,7 @@ jobs {
 }
 
 @Field
-Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService)).loadLicensesFromEnv()
+Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService)).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
 
 private String getLicenceFromBucket(String nodeId) {
     // get a licence from the bucket
@@ -48,22 +48,22 @@ private void cleanBucket() {
 }
 
 enum State {
-    AVAILABLE, EVENTUALLY_TAKEN, TAKEN
+    AVAILABLE, TAKEN
 }
 
 @EqualsAndHashCode(includes = 'keyHash')
-class License {
+public class License {
 
     String keyHash
     String nodeId
     State state
-    Date requestTimestamp
+    Date takenTimestamp
 
 }
 
-class Bucket {
+public class Bucket {
 
-    final long EVENTUAL_EXPIRATION_TIME = 60_000
+    final long DELAY_TO_ALLOW_TAKEN_LICENSE = 60_000
 
     Set<License> licenses = new HashSet<License>()
     ArtifactoryServersCommonService artifactoryServersCommonService
@@ -72,9 +72,9 @@ class Bucket {
         this.artifactoryServersCommonService = artifactoryServersCommonService
     }
 
-    void loadLicensesFromEnv() {
+    void loadLicensesFromEnv(String licensesConcatenated) {
         // licences from Env, by default all available
-        String[] licenseKeys = System.getenv('ART_LICENSES')?.split(',')
+        String[] licenseKeys = licensesConcatenated?.split(',')
         for (String licenseKey : licenseKeys) {
             licenses << new License(keyHash:hashLicenseKey(licenseKey), state: State.AVAILABLE)
         }
@@ -82,7 +82,7 @@ class Bucket {
         List<ArtifactoryServer> servers = artifactoryServersCommonService.getAllArtifactoryServers()
         for (ArtifactoryServer server : servers) {
             if (server.serverRole != ArtifactoryServerRole.PRIMARY) {
-                // Looking for existing license in the registered servers
+                // Looking for existing license from the registered servers
                 License existing = licenses.find { it.keyHash == server.licenseKeyHash }
                 if (existing) {
                     existing.nodeId = server.serverId
@@ -97,12 +97,12 @@ class Bucket {
     }
 
     String hashLicenseKey(String licenseKey) {
-        DigestUtils.sha1(licenseKey) + "3"
+        DigestUtils.sha1Hex(licenseKey) + "3"
     }
 
     void eventuallyTakeLicense(License license) {
-        license.state = State.EVENTUALLY_TAKEN
-        license.requestTimestamp = new Date()
+        license.state = State.TAKEN
+        license.takenTimestamp = new Date()
     }
 
     String getLicenseKey(String nodeId) {
@@ -118,12 +118,13 @@ class Bucket {
         // We check that a license
         for (License license : licenses) {
             if (license.state == State.TAKEN) {
-                // check that the server is still running or starting
-            } else if (license.state == State.EVENTUALLY_TAKEN) {
-                // check that the server is there
-                    // and is now running => pass the state of the license as Taken
-                    // or if not running, check that currentTime - timestamp < DELAY if not mark as AVAILABLE again
-                // if not there, mark as available again
+                // check that the server is still running
+                // if yes, reset the takenTimestamp
+
+                // if not, check the takenTimestamp + delay < now
+
+                    // change the state to available and reset the takenTimestamp
+
             } else if (license.state == State.AVAILABLE) {
                 // check that there's no running server corresponding to the license
                 // if so change the state to TAKEN
