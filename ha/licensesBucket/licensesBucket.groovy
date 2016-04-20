@@ -9,10 +9,12 @@ import org.artifactory.storage.db.servers.model.ArtifactoryServerRole
 import org.artifactory.storage.db.servers.service.ArtifactoryServersCommonService
 import org.slf4j.Logger
 
-// Licenses Bucket plugin
+
+@Field
+Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
 
 executions {
-    // See how we can secure the call, maybe check the token
+    // See how we can secure the call, maybe pass a token
     getLicenceFromBucket() { params ->
         String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
         String licence = getLicenceFromBucket(nodeId)
@@ -28,18 +30,13 @@ executions {
 }
 
 jobs {
-    // Every 30s we clean the license pool
     clean(cron: "1/30 * * * * ?") {
         def artifactoryServersCommonService = ContextHelper.get().beanForType(ArtifactoryServersCommonService)
         new ArtifactoryInactiveServersCleaner(artifactoryServersCommonService, log).cleanInactiveArtifactoryServers()
     }
 }
 
-@Field
-Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
-
 private String getLicenceFromBucket(String nodeId) {
-    // get a licence from the bucket
     licensesBucket.getLicenseKey(nodeId)
 }
 
@@ -54,8 +51,8 @@ public class Bucket {
     final long DELAY_TO_ALLOW_TAKEN_LICENSE = 60_000
 
     Set<License> licenses = new HashSet<License>()
-    ArtifactoryServersCommonService artifactoryServersCommonService
-    Logger log
+    private ArtifactoryServersCommonService artifactoryServersCommonService
+    private Logger log
 
     public Bucket(ArtifactoryServersCommonService artifactoryServersCommonService, Logger log) {
         this.artifactoryServersCommonService = artifactoryServersCommonService
@@ -91,25 +88,25 @@ public class Bucket {
 
 public class ArtifactoryInactiveServersCleaner {
 
-    ArtifactoryServersCommonService artifactoryServersCommonService
-    Logger log
+    private ArtifactoryServersCommonService artifactoryServersCommonService
+    private Logger log
 
     ArtifactoryInactiveServersCleaner(ArtifactoryServersCommonService artifactoryServersCommonService, Logger log) {
         this.artifactoryServersCommonService = artifactoryServersCommonService
         this.log = log
     }
 
-    void cleanInactiveArtifactoryServers() {
+    List<String> cleanInactiveArtifactoryServers() {
         List<String> allMembers = artifactoryServersCommonService.getAllArtifactoryServers().collect({ it.serverId })
         List<String> activeMembersIds = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.serverId })
         String primaryId = artifactoryServersCommonService.getRunningHaPrimary().serverId
-        List<String> inactiveMemebers = allMembers - activeMembersIds - primaryId
-        log.warn "Running inactive artifactory servers cleaning task, found ${inactiveMemebers.size()} inactive servers to remove"
-        inactiveMemebers.each {
-            artifactoryServersCommonService.removeServer(it)
+        List<String> inactiveMembers = allMembers - activeMembersIds - primaryId
+        log.warn "Running inactive artifactory servers cleaning task, found ${inactiveMembers.size()} inactive servers to remove"
+        for (String inactiveMember : inactiveMembers) {
+            println "In cleaning $inactiveMember $artifactoryServersCommonService"
+            artifactoryServersCommonService.removeServer(inactiveMember)
         }
+        return inactiveMembers
     }
 
 }
-
-
