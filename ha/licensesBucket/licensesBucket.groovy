@@ -11,13 +11,14 @@ import org.slf4j.Logger
 
 
 @Field
-Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log).loadLicensesFromEnv(System.getenv('ART_LICENSES'))
+Bucket bucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log)
+bucket.loadLicensesFromEnv(System.getenv('ART_LICENSES'))
 
 executions {
     // See how we can secure the call, maybe pass a token
-    getLicence() { params ->
+    getLicense() { params ->
         String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
-        String licence = getLicenceFromBucket(nodeId)
+        String licence = getLicenseFromBucket(nodeId)
         String message
         if (licence) {
             def json = [licenceKey: licence]
@@ -36,8 +37,8 @@ jobs {
     }
 }
 
-String getLicenceFromBucket(String nodeId) {
-    licensesBucket.getLicenseKey(nodeId)
+String getLicenseFromBucket(String nodeId) {
+    bucket.getLicenseKey(nodeId)
 }
 
 @EqualsAndHashCode(includes = 'keyHash')
@@ -47,8 +48,6 @@ public class License {
 }
 
 public class Bucket {
-
-    final long DELAY_TO_ALLOW_TAKEN_LICENSE = 60_000
 
     Set<License> licenses = new HashSet<License>()
     private ArtifactoryServersCommonService artifactoryServersCommonService
@@ -68,7 +67,7 @@ public class Bucket {
     }
 
     String hashLicenseKey(String licenseKey) {
-        DigestUtils.sha1Hex(licenseKey) + "3"
+        DigestUtils.sha1Hex(licenseKey.trim()) + "3"
     }
 
     String getLicenseKey(String nodeId) {
