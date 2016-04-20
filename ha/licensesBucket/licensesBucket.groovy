@@ -15,7 +15,7 @@ Bucket licensesBucket = new Bucket(ContextHelper.get().beanForType(ArtifactorySe
 
 executions {
     // See how we can secure the call, maybe pass a token
-    getLicenceFromBucket() { params ->
+    getLicence() { params ->
         String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
         String licence = getLicenceFromBucket(nodeId)
         String message
