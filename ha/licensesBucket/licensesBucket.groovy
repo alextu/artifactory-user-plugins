@@ -36,7 +36,7 @@ jobs {
     }
 }
 
-private String getLicenceFromBucket(String nodeId) {
+String getLicenceFromBucket(String nodeId) {
     licensesBucket.getLicenseKey(nodeId)
 }
 
