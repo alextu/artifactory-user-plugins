@@ -18,11 +18,9 @@ executions {
     // See how we can secure the call, maybe pass a token
     getLicense() { params ->
         String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
-        String licence = getLicenseFromBucket(nodeId)
-        String message
-        if (licence) {
-            def json = [licenceKey: licence]
-            message = new JsonBuilder(json).toPrettyString()
+        String license = getLicenseFromBucket(nodeId)
+        if (license) {
+            message = license
             status = 200
         } else {
             status = 404
