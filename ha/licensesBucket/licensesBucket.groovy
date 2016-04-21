@@ -1,14 +1,10 @@
-import groovy.json.JsonBuilder
 import groovy.transform.EqualsAndHashCode
 import groovy.transform.Field
 import org.apache.commons.codec.digest.DigestUtils
 import org.artifactory.api.context.ContextHelper
-import org.artifactory.state.ArtifactoryServerState
-import org.artifactory.storage.db.servers.model.ArtifactoryServer
-import org.artifactory.storage.db.servers.model.ArtifactoryServerRole
+import org.artifactory.resource.ResourceStreamHandle
 import org.artifactory.storage.db.servers.service.ArtifactoryServersCommonService
 import org.slf4j.Logger
-
 
 @Field
 Bucket bucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log)
@@ -25,6 +21,11 @@ executions {
         } else {
             status = 404
         }
+    }
+
+    importLicense(httpMethod: 'POST') { params, ResourceStreamHandle body ->
+        String licenseKey = body.inputStream.getText('UTF-8')
+        bucket.loadLicense(licenseKey)
     }
 }
 
@@ -59,18 +60,28 @@ public class Bucket {
     void loadLicensesFromEnv(String licensesConcatenated) {
         String[] licenseKeys = licensesConcatenated?.split(',')
         for (String licenseKey : licenseKeys) {
-            licenses << new License(keyHash : hashLicenseKey(licenseKey), key: licenseKey)
+            licenses << createLicense(licenseKey)
         }
         log.warn "${licenses.size()} licenses for secondary nodes loaded"
     }
 
-    String hashLicenseKey(String licenseKey) {
-        DigestUtils.sha1Hex(licenseKey.trim()) + "3"
+    void loadLicense(String licenseKey) {
+        licenses << createLicense(licenseKey)
+    }
+
+    private License createLicense(String licenseKey) {
+        def hash = hashLicenseKey(licenseKey)
+        log.warn "Importing license with hash : $hash"
+        return new License(keyHash: hash, key: licenseKey)
+    }
+
+    private String hashLicenseKey(String licenseKey) {
+        DigestUtils.sha1Hex(licenseKey.trim())
     }
 
     String getLicenseKey(String nodeId) {
         log.warn "Node $nodeId is requesting a license from the primary"
-        List<String> activeMemberLicenses = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash })
+        List<String> activeMemberLicenses = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash[0..-2] })
         Set<String> availableLicenses = licenses*.keyHash - activeMemberLicenses
         log.warn "Found ${availableLicenses.size()} available licenses"
         String license
@@ -80,7 +91,6 @@ public class Bucket {
         }
         return license
     }
-
 }
 
 public class ArtifactoryInactiveServersCleaner {
@@ -100,7 +110,6 @@ public class ArtifactoryInactiveServersCleaner {
         List<String> inactiveMembers = allMembers - activeMembersIds - primaryId
         log.warn "Running inactive artifactory servers cleaning task, found ${inactiveMembers.size()} inactive servers to remove"
         for (String inactiveMember : inactiveMembers) {
-            println "In cleaning $inactiveMember $artifactoryServersCommonService"
             artifactoryServersCommonService.removeServer(inactiveMember)
         }
         return inactiveMembers
