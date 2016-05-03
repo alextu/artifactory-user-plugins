@@ -1,4 +1,7 @@
 import groovy.util.logging.Slf4j
+import org.apache.commons.codec.digest.DigestUtils
+import org.apache.commons.io.FileUtils
+import org.artifactory.addon.AddonsManager
 import org.artifactory.addon.ArtifactoryRunningMode
 import org.artifactory.state.ArtifactoryServerState
 import org.artifactory.storage.db.servers.model.ArtifactoryServer
@@ -10,6 +13,22 @@ import spock.lang.Specification
 class LicensesBucketTest extends Specification {
 
     Bucket bucket
+
+    def 'test hashing'() {
+        setup:
+        ArtifactoryServersCommonService serversCommonService = [
+                getAllArtifactoryServers : { [] }
+        ] as ArtifactoryServersCommonService
+        bucket = new Bucket(serversCommonService, log)
+
+        when:
+        String hash = bucket.licenseKeyHash('somelicense1')
+        String hash2 = bucket.licenseKeyHash('somelicense2')
+        println "somelicense2 : $hash2"
+
+        then:
+        hash == 'ef80a5ff1fa7bd35887674aa0f922c43ddff017c'
+    }
 
     def 'loading licenses from env'() {
         setup:
@@ -24,8 +43,8 @@ class LicensesBucketTest extends Specification {
 
         then:
         bucket.licenses.size() == 2
-        bucket.licenses.contains(new License(keyHash: 'dbc6a1c2114418d3b2af3fce71acfbc4c46edc523'))
-        bucket.licenses.contains(new License(keyHash:'8fd780adb7f94db8f811f60e6aa9b9ebab0f529f3'))
+        bucket.licenses.contains(new License(keyHash: 'ef80a5ff1fa7bd35887674aa0f922c43ddff017c'))
+        bucket.licenses.contains(new License(keyHash:'24f17ca9f2aa245809d3262a045996e5db1d561f'))
     }
 
     def 'get license from bucket with no server started should return one license'() {
@@ -49,7 +68,7 @@ class LicensesBucketTest extends Specification {
         setup:
         ArtifactoryServersCommonService serversCommonService = [
                 getAllArtifactoryServers : { [] },
-                getOtherActiveMembers : { [ createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, '8fd780adb7f94db8f811f60e6aa9b9ebab0f529f3') ] }
+                getOtherActiveMembers : { [ createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, '24f17ca9f2aa245809d3262a045996e5db1d561f1') ] }
         ] as ArtifactoryServersCommonService
         bucket = new Bucket(serversCommonService, log)
         String licences = 'somelicense1,somelicense2'
@@ -66,8 +85,8 @@ class LicensesBucketTest extends Specification {
         setup:
         ArtifactoryServersCommonService serversCommonService = [
                 getAllArtifactoryServers : { [] },
-                getOtherActiveMembers : { [ createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, 'dbc6a1c2114418d3b2af3fce71acfbc4c46edc523'),
-                                            createArtifactoryMemberServer('art-5', ArtifactoryServerState.RUNNING, '8fd780adb7f94db8f811f60e6aa9b9ebab0f529f3')    ] }
+                getOtherActiveMembers : { [ createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, 'ef80a5ff1fa7bd35887674aa0f922c43ddff017c1'),
+                                            createArtifactoryMemberServer('art-5', ArtifactoryServerState.RUNNING, '24f17ca9f2aa245809d3262a045996e5db1d561f1')    ] }
         ] as ArtifactoryServersCommonService
         bucket = new Bucket(serversCommonService, log)
         String licences = 'somelicense1,somelicense2'
@@ -82,8 +101,8 @@ class LicensesBucketTest extends Specification {
 
     def 'cleaning servers should remove inactive servers'() {
         def art1 = createArtifactoryPrimaryServer('art-1', ArtifactoryServerState.RUNNING, 'something')
-        def art4 = createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, 'dbc6a1c2114418d3b2af3fce71acfbc4c46edc523')
-        def art5 = createArtifactoryMemberServer('art-5', ArtifactoryServerState.STOPPED, '8fd780adb7f94db8f811f60e6aa9b9ebab0f529f3')
+        def art4 = createArtifactoryMemberServer('art-4', ArtifactoryServerState.RUNNING, 'ef80a5ff1fa7bd35887674aa0f922c43ddff017c1')
+        def art5 = createArtifactoryMemberServer('art-5', ArtifactoryServerState.STOPPED, '24f17ca9f2aa245809d3262a045996e5db1d561f1')
 
         setup:
         ArtifactoryServersCommonService serversCommonService = [

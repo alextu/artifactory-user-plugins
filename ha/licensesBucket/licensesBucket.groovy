@@ -5,24 +5,27 @@ import org.artifactory.api.context.ContextHelper
 import org.artifactory.resource.ResourceStreamHandle
 import org.artifactory.storage.db.servers.service.ArtifactoryServersCommonService
 import org.slf4j.Logger
+import org.apache.commons.codec.binary.Base64
 
 @Field
 Bucket bucket = new Bucket(ContextHelper.get().beanForType(ArtifactoryServersCommonService), log)
 bucket.loadLicensesFromEnv(System.getenv('ART_LICENSES'))
 
 executions {
-    // See how we can secure the call, maybe pass a token
     getLicense() { params ->
-        String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
-        String license = getLicenseFromBucket(nodeId)
-        if (license) {
-            message = license
-            status = 200
+        if (!checkAccess()) {
+            status = 403
         } else {
-            status = 404
+            String nodeId = params['nodeId'] ? params['nodeId'][0] as String : ''
+            String license = getLicenseFromBucket(nodeId)
+            if (license) {
+                message = license
+                status = 200
+            } else {
+                status = 404
+            }
         }
     }
-
     importLicense(httpMethod: 'POST') { params, ResourceStreamHandle body ->
         String licenseKey = body.inputStream.getText('UTF-8')
         bucket.loadLicense(licenseKey)
@@ -36,8 +39,17 @@ jobs {
     }
 }
 
+boolean checkAccess() {
+    return security.currentUser().isAdmin()
+}
+
 String getLicenseFromBucket(String nodeId) {
-    bucket.getLicenseKey(nodeId)
+    log.warn "Bucket instance : $bucket"
+    // TODO : this lock is not engough, as node takes some time before it turns into 'STARTING' state
+    // We should mark a license as "eventually taken"
+    synchronized (bucket) {
+        bucket.getLicenseKey(nodeId)
+    }
 }
 
 @EqualsAndHashCode(includes = 'keyHash')
@@ -70,27 +82,47 @@ public class Bucket {
     }
 
     private License createLicense(String licenseKey) {
-        def hash = hashLicenseKey(licenseKey)
+        def hash = licenseKeyHash(licenseKey)
         log.warn "Importing license with hash : $hash"
         return new License(keyHash: hash, key: licenseKey)
     }
 
-    private String hashLicenseKey(String licenseKey) {
-        DigestUtils.sha1Hex(licenseKey.trim())
+    public String licenseKeyHash(String licenseKey){
+        String licenseKeyFormatted = formatLicenseKey(licenseKey)
+        String hash = DigestUtils.sha1Hex(licenseKeyFormatted)
+        log.warn "Hash calculated by plugin is ${hash}"
+        return hash
+    }
+
+    private String formatLicenseKey(String licenseKey){
+        licenseKey = encodeBase64StringChunked(Base64.decodeBase64(licenseKey))
+        return licenseKey
+    }
+
+    private String encodeBase64StringChunked(final byte[] binaryData) {
+        String tmp = new String(Base64.encodeBase64(binaryData, true),"UTF-8")
+        return tmp
     }
 
     String getLicenseKey(String nodeId) {
         log.warn "Node $nodeId is requesting a license from the primary"
-        List<String> activeMemberLicenses = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash[0..-2] })
-        Set<String> availableLicenses = licenses*.keyHash - activeMemberLicenses
+        Set<String> allLicensesHashes = licenses*.keyHash
+        log.warn "All licenses : $allLicensesHashes"
+        List<String> activeMemberLicensesHashes = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash[0..-2] })
+        log.warn "Other active member licenses : $activeMemberLicensesHashes"
+        Set<String> availableLicenses = allLicensesHashes - activeMemberLicensesHashes
+        log.warn "Available licenses : $availableLicenses"
         log.warn "Found ${availableLicenses.size()} available licenses"
         String license
         if (availableLicenses) {
             String availableLicenseHash = availableLicenses ? availableLicenses?.first() : null
+            log.warn "HAsh of availabel license ${availableLicenseHash}"
             license = licenses.find({ it.keyHash == availableLicenseHash }).key
+            log.warn "available license is $license"
         }
         return license
     }
+
 }
 
 public class ArtifactoryInactiveServersCleaner {
