@@ -118,8 +118,9 @@ public class Bucket {
         log.warn "All licenses : $allLicensesHashes"
         List<String> activeMemberLicensesHashes = artifactoryServersCommonService.getOtherActiveMembers().collect({ it.licenseKeyHash[0..-2] })
         log.warn "Other active member licenses : $activeMemberLicensesHashes"
-
-        Set<String> availableLicenses = allLicensesHashes - activeMemberLicensesHashes - getRequestedLicensesHashes()
+        def requestedLicensesHashes = getRequestedLicensesHashes()
+        log.warn "Latest requested licenses : $requestedLicensesHashes"
+        Set<String> availableLicenses = allLicensesHashes - activeMemberLicensesHashes - requestedLicensesHashes
         log.warn "Available licenses : $availableLicenses"
         log.warn "Found ${availableLicenses.size()} available licenses"
         String licenseKey
